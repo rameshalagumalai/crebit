@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="splash_background">#FFF9FAFB</color>
+
+    <!-- Crebit Widget Colors -->
+    <color name="widget_bg">#FF18181B</color>
+    <color name="widget_border">#FF2A2A2E</color>
+    <color name="widget_text_secondary">#FFA1A1AA</color>
+    <color name="widget_income_green">#FF10B981</color>
+    <color name="widget_income_bg">#1A10B981</color>
+    <color name="widget_income_border">#3310B981</color>
+    <color name="widget_expense_bg">#3327272A</color>
+    <color name="widget_expense_border">#403F3F46</color>
+    <color name="widget_badge_positive_bg">#2610B981</color>
+    <color name="widget_badge_deficit_bg">#33EF4444</color>
+    <color name="widget_action_btn_bg">#333F3F46</color>
+</resources>

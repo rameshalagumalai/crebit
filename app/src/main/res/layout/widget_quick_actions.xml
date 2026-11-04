@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_qa_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:gravity="center"
+    android:background="@drawable/widget_background"
+    android:padding="8dp"
+    android:baselineAligned="false">
+
+    <!-- Scan Button -->
+    <LinearLayout
+        android:id="@+id/widget_btn_scan"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:background="@drawable/widget_action_card_bg_dark"
+        android:layout_marginStart="3dp"
+        android:layout_marginEnd="3dp"
+        android:contentDescription="Scan UPI">
+
+        <FrameLayout
+            android:id="@+id/widget_box_scan"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="@drawable/widget_icon_box_scan_dark">
+
+            <ImageView
+                android:id="@+id/widget_icon_scan"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_widget_scan"
+                android:contentDescription="Scan UPI" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- Spend Button -->
+    <LinearLayout
+        android:id="@+id/widget_btn_spend"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:background="@drawable/widget_action_card_bg_dark"
+        android:layout_marginStart="3dp"
+        android:layout_marginEnd="3dp"
+        android:contentDescription="Spend">
+
+        <FrameLayout
+            android:id="@+id/widget_box_spend"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="@drawable/widget_icon_box_spend_dark">
+
+            <ImageView
+                android:id="@+id/widget_icon_spend"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_widget_arrow_up"
+                android:contentDescription="Spend" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- Receive Button -->
+    <LinearLayout
+        android:id="@+id/widget_btn_receive"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:background="@drawable/widget_action_card_bg_dark"
+        android:layout_marginStart="3dp"
+        android:layout_marginEnd="3dp"
+        android:contentDescription="Receive">
+
+        <FrameLayout
+            android:id="@+id/widget_box_receive"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="@drawable/widget_icon_box_receive_dark">
+
+            <ImageView
+                android:id="@+id/widget_icon_receive"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_widget_arrow_down"
+                android:contentDescription="Receive" />
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- Move Button -->
+    <LinearLayout
+        android:id="@+id/widget_btn_move"
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:background="@drawable/widget_action_card_bg_dark"
+        android:layout_marginStart="3dp"
+        android:layout_marginEnd="3dp"
+        android:contentDescription="Move">
+
+        <FrameLayout
+            android:id="@+id/widget_box_move"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:background="@drawable/widget_icon_box_move_dark">
+
+            <ImageView
+                android:id="@+id/widget_icon_move"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_widget_move"
+                android:contentDescription="Move" />
+        </FrameLayout>
+    </LinearLayout>
+
+</LinearLayout>

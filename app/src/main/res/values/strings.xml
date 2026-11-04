@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Crebit</string>
+    <string name="widget_overview_name">Crebit Overview</string>
+    <string name="widget_overview_description">Displays monthly financial overview with net savings, total income, and total expense.</string>
+    <string name="widget_quick_actions_name">Crebit Quick Actions</string>
+    <string name="widget_quick_actions_description">Quick actions to Scan UPI, record Spend, Receive income, or Move funds.</string>
+</resources>
