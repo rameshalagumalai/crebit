@@ -344,7 +344,7 @@ private fun WalkthroughWelcomePage() {
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            text = "100% Private, Offline-First Personal Finance",
+            text = "Private & Secure Personal Finance",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
@@ -361,8 +361,8 @@ private fun WalkthroughWelcomePage() {
             WalkthroughFeatureItem(
                 icon = Icons.Default.Bolt,
                 iconTint = Color(0xFFFFA000),
-                title = "Instant & Offline-First",
-                description = "Stored directly in your phone's secure SQLite database. Works flawlessly without internet anywhere."
+                title = "Instant & On-Device",
+                description = "Stored directly in your phone's secure SQLite database. Works flawlessly anywhere with zero latency."
             )
 
             WalkthroughFeatureItem(
