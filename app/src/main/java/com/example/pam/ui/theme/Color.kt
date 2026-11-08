@@ -46,6 +46,14 @@ val ExpenseRed = Color(0xFFEF4444)
 val ExpenseRedContainer = Color(0xFFFEE2E2)
 val OnExpenseRed = Color(0xFF991B1B)
 
+val WarningAmber = Color(0xFFF59E0B)
+val WarningAmberContainer = Color(0xFFFEF3C7)
+val OnWarningAmber = Color(0xFF92400E)
+
+val WarningAmberDark = Color(0xFFFBBF24)
+val WarningAmberContainerDark = Color(0xFF332005)
+val OnWarningAmberDark = Color(0xFFFEF3C7)
+
 val TransferBlue = Color(0xFF64748B)
 val TransferBlueContainer = Color(0xFFF1F5F9)
 val OnTransferBlue = Color(0xFF334155)

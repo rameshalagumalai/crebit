@@ -14,17 +14,25 @@ import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,16 +48,20 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Keyboard
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +75,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -74,34 +87,59 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.platform.LocalContext
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.example.pam.ui.theme.IncomeGreen
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.pam.data.model.Transaction
+import com.example.pam.data.repository.PAMRepository
+import com.example.pam.ui.components.ReceiptScanResultBottomSheet
+import com.example.pam.ui.theme.IncomeGreen
 import com.example.pam.util.UpiParser
+import com.example.pam.util.ai.ParsedReceipt
+import com.example.pam.util.ai.ReceiptParser
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
+
+enum class ScannerMode(val label: String) {
+    QR_CODE("UPI QR"),
+    RECEIPT("Receipt (AI)")
+}
 
 @OptIn(ExperimentalGetImage::class)
 @Composable
 fun UpiQrScannerScreen(
+    initialModeStr: String? = null,
     onNavigateBack: () -> Unit,
-    onQrCodeDetected: (scannedContent: String) -> Unit
+    onQrCodeDetected: (scannedContent: String) -> Unit,
+    onNavigateToAddTransactionWithReceipt: (amount: Double, merchant: String, categoryId: Long?, accountId: Long, dateMillis: Long, note: String) -> Unit = { _, _, _, _, _, _ -> }
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val repository = remember { PAMRepository.getInstance(context) }
+
+    val accounts by repository.getAccountsFlow().collectAsState(initial = emptyList())
+    val categories by repository.getCategoriesFlow().collectAsState(initial = emptyList())
+
+    var currentMode by remember {
+        mutableStateOf(
+            if (initialModeStr.equals("RECEIPT", ignoreCase = true)) ScannerMode.RECEIPT else ScannerMode.QR_CODE
+        )
+    }
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -115,7 +153,7 @@ fun UpiQrScannerScreen(
         hasCameraPermission = isGranted
         if (!isGranted) {
             scope.launch {
-                snackbarHostState.showSnackbar("Camera permission is required to scan QR codes live")
+                snackbarHostState.showSnackbar("Camera permission is required to scan live")
             }
         }
     }
@@ -129,40 +167,130 @@ fun UpiQrScannerScreen(
     var camera by remember { mutableStateOf<Camera?>(null) }
     var isTorchOn by remember { mutableStateOf(false) }
     var isScanProcessed by remember { mutableStateOf(false) }
+    var isAnalyzingReceipt by remember { mutableStateOf(false) }
     var showManualInputDialog by remember { mutableStateOf(false) }
+    var scannedReceiptResult by remember { mutableStateOf<ParsedReceipt?>(null) }
 
-    // Pick from Gallery Launcher
+    val imageCapture = remember {
+        ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .build()
+    }
+
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+
+    // Pick from Gallery Launcher (handles both QR code and Receipt photo)
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         if (uri != null) {
             try {
                 val inputImage = InputImage.fromFilePath(context, uri)
-                val scanner = BarcodeScanning.getClient()
-                scanner.process(inputImage)
-                    .addOnSuccessListener { barcodes ->
-                        val qrCode = barcodes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }
-                        val rawValue = qrCode?.rawValue
-                        if (!rawValue.isNullOrBlank()) {
-                            triggerVibration(context)
-                            onQrCodeDetected(rawValue)
-                        } else {
-                            scope.launch {
-                                snackbarHostState.showSnackbar("No QR code found in selected image")
+                if (currentMode == ScannerMode.QR_CODE) {
+                    val scanner = BarcodeScanning.getClient()
+                    scanner.process(inputImage)
+                        .addOnSuccessListener { barcodes ->
+                            val qrCode = barcodes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }
+                            val rawValue = qrCode?.rawValue
+                            if (!rawValue.isNullOrBlank()) {
+                                triggerVibration(context)
+                                onQrCodeDetected(rawValue)
+                            } else {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("No QR code found in selected image")
+                                }
                             }
                         }
-                    }
-                    .addOnFailureListener {
-                        scope.launch {
-                            snackbarHostState.showSnackbar("Failed to process image")
+                        .addOnFailureListener {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Failed to process QR image")
+                            }
                         }
-                    }
+                } else {
+                    // Receipt mode OCR from gallery
+                    isAnalyzingReceipt = true
+                    val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                    recognizer.process(inputImage)
+                        .addOnSuccessListener { visionText ->
+                            isAnalyzingReceipt = false
+                            val parsed = ReceiptParser.parse(visionText, categories)
+                            if (parsed.amount != null || parsed.merchantName != null) {
+                                triggerVibration(context)
+                                scannedReceiptResult = parsed
+                            } else {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Could not detect receipt details. Try a clearer image.")
+                                }
+                            }
+                        }
+                        .addOnFailureListener {
+                            isAnalyzingReceipt = false
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Failed to read receipt image")
+                            }
+                        }
+                }
             } catch (e: Exception) {
+                isAnalyzingReceipt = false
                 scope.launch {
                     snackbarHostState.showSnackbar("Error reading image: ${e.localizedMessage}")
                 }
             }
         }
+    }
+
+    // Function to snap photo and run on-device OCR
+    fun snapAndAnalyzeReceipt() {
+        if (isAnalyzingReceipt) return
+        isAnalyzingReceipt = true
+
+        imageCapture.takePicture(
+            cameraExecutor,
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(imageProxy: ImageProxy) {
+                    val mediaImage = imageProxy.image
+                    if (mediaImage != null) {
+                        val inputImage = InputImage.fromMediaImage(
+                            mediaImage,
+                            imageProxy.imageInfo.rotationDegrees
+                        )
+                        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                        recognizer.process(inputImage)
+                            .addOnSuccessListener { visionText ->
+                                isAnalyzingReceipt = false
+                                val parsed = ReceiptParser.parse(visionText, categories)
+                                if (parsed.amount != null || parsed.merchantName != null) {
+                                    triggerVibration(context)
+                                    scannedReceiptResult = parsed
+                                } else {
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar("No bill amount detected. Try holding closer with good lighting.")
+                                    }
+                                }
+                            }
+                            .addOnFailureListener { e ->
+                                isAnalyzingReceipt = false
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Scan error: ${e.localizedMessage}")
+                                }
+                            }
+                            .addOnCompleteListener {
+                                imageProxy.close()
+                            }
+                    } else {
+                        isAnalyzingReceipt = false
+                        imageProxy.close()
+                    }
+                }
+
+                override fun onError(exception: ImageCaptureException) {
+                    isAnalyzingReceipt = false
+                    scope.launch {
+                        snackbarHostState.showSnackbar("Capture failed: ${exception.localizedMessage}")
+                    }
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -176,8 +304,6 @@ fun UpiQrScannerScreen(
         ) {
             if (hasCameraPermission) {
                 // Camera Preview
-                val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
-
                 AndroidView(
                     factory = { ctx ->
                         val previewView = PreviewView(ctx)
@@ -197,7 +323,7 @@ fun UpiQrScannerScreen(
                                 .also { analysis ->
                                     analysis.setAnalyzer(cameraExecutor) { imageProxy ->
                                         val mediaImage = imageProxy.image
-                                        if (mediaImage != null && !isScanProcessed) {
+                                        if (mediaImage != null && !isScanProcessed && currentMode == ScannerMode.QR_CODE) {
                                             val image = InputImage.fromMediaImage(
                                                 mediaImage,
                                                 imageProxy.imageInfo.rotationDegrees
@@ -233,6 +359,7 @@ fun UpiQrScannerScreen(
                                     lifecycleOwner,
                                     cameraSelector,
                                     preview,
+                                    imageCapture,
                                     imageAnalysis
                                 )
                             } catch (e: Exception) {
@@ -251,8 +378,8 @@ fun UpiQrScannerScreen(
                     }
                 }
 
-                // Visual Reticle Overlay
-                QrScannerOverlay()
+                // Dual-Mode Reticle Overlay
+                SmartScannerOverlay(mode = currentMode)
             } else {
                 // Permission Denied Card
                 Box(
@@ -277,13 +404,13 @@ fun UpiQrScannerScreen(
                             )
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
-                                text = "Camera Permission Needed",
+                                text = "Camera Access Required",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "To scan UPI QR codes directly, PAM requires access to your camera. You can also pick an existing QR screenshot from your gallery.",
+                                text = "PAM uses your camera to scan UPI QR codes and locally parse paper receipts with on-device AI.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -312,112 +439,263 @@ fun UpiQrScannerScreen(
                 }
             }
 
-            // Top Bar with Back and Flashlight
-            Row(
+            // Top Header: Back button, Segmented Mode Switch, Torch toggle
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 24.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .align(Alignment.TopCenter)
+                    .padding(horizontal = 16.dp, vertical = 20.dp)
             ) {
-                IconButton(
-                    onClick = onNavigateBack,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.5f))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color.White
-                    )
-                }
-
-                Text(
-                    text = "Scan UPI QR",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-
-                if (hasCameraPermission && camera?.cameraInfo?.hasFlashUnit() == true) {
                     IconButton(
-                        onClick = {
-                            isTorchOn = !isTorchOn
-                            camera?.cameraControl?.enableTorch(isTorchOn)
-                        },
+                        onClick = onNavigateBack,
                         modifier = Modifier
                             .clip(CircleShape)
                             .background(Color.Black.copy(alpha = 0.5f))
                     ) {
                         Icon(
-                            imageVector = if (isTorchOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
-                            contentDescription = "Torch",
-                            tint = if (isTorchOn) Color(0xFFFBBF24) else Color.White
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White
                         )
                     }
-                } else {
-                    Spacer(modifier = Modifier.size(40.dp))
+
+                    // Mode Toggle (QR vs Receipt)
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color.Black.copy(alpha = 0.65f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.15f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            ScannerModeTab(
+                                title = "UPI QR",
+                                icon = Icons.Default.QrCodeScanner,
+                                isSelected = currentMode == ScannerMode.QR_CODE,
+                                activeColor = IncomeGreen,
+                                onClick = { currentMode = ScannerMode.QR_CODE }
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            ScannerModeTab(
+                                title = "Receipt (AI)",
+                                icon = Icons.Default.AutoAwesome,
+                                isSelected = currentMode == ScannerMode.RECEIPT,
+                                activeColor = Color(0xFF8B5CF6),
+                                onClick = { currentMode = ScannerMode.RECEIPT }
+                            )
+                        }
+                    }
+
+                    if (hasCameraPermission && camera?.cameraInfo?.hasFlashUnit() == true) {
+                        IconButton(
+                            onClick = {
+                                isTorchOn = !isTorchOn
+                                camera?.cameraControl?.enableTorch(isTorchOn)
+                            },
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.5f))
+                        ) {
+                            Icon(
+                                imageVector = if (isTorchOn) Icons.Default.FlashOn else Icons.Default.FlashOff,
+                                contentDescription = "Torch",
+                                tint = if (isTorchOn) Color(0xFFFBBF24) else Color.White
+                            )
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.size(40.dp))
+                    }
                 }
             }
 
-            // Bottom Actions: Pick from Gallery & Manual Enter
+            // Bottom Actions & Shutter
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 24.dp, vertical = 32.dp),
+                    .padding(horizontal = 24.dp, vertical = 28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // Hint Tag
                 Surface(
                     shape = RoundedCornerShape(16.dp),
                     color = Color.Black.copy(alpha = 0.65f)
                 ) {
                     Text(
-                        text = "Point camera at any UPI QR code",
+                        text = if (currentMode == ScannerMode.QR_CODE) {
+                            "Point camera at any UPI QR code"
+                        } else {
+                            "Align receipt inside frame & tap Snap • 100% Offline"
+                        },
                         color = Color.White,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(18.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    // Pick from Gallery
-                    Button(
-                        onClick = {
-                            galleryLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.padding(end = 8.dp)
+                if (currentMode == ScannerMode.QR_CODE) {
+                    // QR Mode Controls: Gallery & Manual
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center
                     ) {
-                        Icon(imageVector = Icons.Default.Image, contentDescription = "Gallery", tint = Color.White)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Gallery QR", color = Color.White)
+                        Button(
+                            onClick = {
+                                galleryLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Image, contentDescription = "Gallery", tint = Color.White)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Gallery QR", color = Color.White)
+                        }
+
+                        Button(
+                            onClick = { showManualInputDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.padding(start = 8.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Keyboard, contentDescription = "Manual", tint = Color.White)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Paste / Type", color = Color.White)
+                        }
                     }
-
-                    // Manual Paste
-                    Button(
-                        onClick = { showManualInputDialog = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.2f)),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.padding(start = 8.dp)
+                } else {
+                    // Receipt Mode Controls: Gallery Pick & Center Shutter Snap Button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(imageVector = Icons.Default.Keyboard, contentDescription = "Manual", tint = Color.White)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Paste / Type", color = Color.White)
+                        // Pick photo from gallery
+                        IconButton(
+                            onClick = {
+                                galleryLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            modifier = Modifier
+                                .size(50.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.2f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Image,
+                                contentDescription = "Pick Receipt",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        // Shutter Button
+                        Box(
+                            modifier = Modifier
+                                .size(76.dp)
+                                .clip(CircleShape)
+                                .border(3.dp, Color.White, CircleShape)
+                                .padding(5.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(
+                                            Color(0xFF8B5CF6),
+                                            Color(0xFF3B82F6)
+                                        )
+                                    )
+                                )
+                                .clickable { snapAndAnalyzeReceipt() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isAnalyzingReceipt) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(28.dp),
+                                    color = Color.White,
+                                    strokeWidth = 3.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                    contentDescription = "Snap Receipt",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(30.dp)
+                                )
+                            }
+                        }
+
+                        // Placeholder for symmetry
+                        Spacer(modifier = Modifier.size(50.dp))
+                    }
+                }
+            }
+
+            // Loading Overlay when analyzing
+            AnimatedVisibility(
+                visible = isAnalyzingReceipt,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.Black.copy(alpha = 0.8f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = Color(0xFF8B5CF6),
+                            strokeWidth = 2.5.dp
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Text(
+                            text = "Extracting receipt on-device...",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
             }
         }
+    }
+
+    // Receipt Scanned Result Bottom Sheet
+    scannedReceiptResult?.let { receipt ->
+        ReceiptScanResultBottomSheet(
+            parsedReceipt = receipt,
+            accounts = accounts,
+            categories = categories,
+            onSaveTransaction = { txn ->
+                scope.launch {
+                    repository.addTransaction(txn)
+                    snackbarHostState.showSnackbar("Logged: ${txn.title} (₹${txn.amount})")
+                    onNavigateBack()
+                }
+            },
+            onReviewInFullEditor = { amount, merchant, categoryId, accountId, dateMillis, note ->
+                onNavigateToAddTransactionWithReceipt(amount, merchant, categoryId, accountId, dateMillis, note)
+            },
+            onClose = {
+                scannedReceiptResult = null
+            }
+        )
     }
 
     // Manual Input Dialog
@@ -472,22 +750,62 @@ fun UpiQrScannerScreen(
 }
 
 @Composable
-fun QrScannerOverlay() {
+private fun ScannerModeTab(
+    title: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    isSelected: Boolean,
+    activeColor: Color,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .clickable { onClick() },
+        shape = RoundedCornerShape(20.dp),
+        color = if (isSelected) activeColor else Color.Transparent
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (isSelected) Color.White else Color.White.copy(alpha = 0.7f),
+                modifier = Modifier.size(15.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = title,
+                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.7f),
+                fontSize = 12.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+fun SmartScannerOverlay(mode: ScannerMode) {
     val infiniteTransition = rememberInfiniteTransition(label = "ScannerAnim")
     val laserPosition by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = FastOutSlowInEasing),
+            animation = tween(2200, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "LaserPosition"
     )
 
     Canvas(modifier = Modifier.fillMaxSize()) {
-        val squareSize = size.minDimension * 0.7f
-        val left = (size.width - squareSize) / 2
-        val top = (size.height - squareSize) / 2 - 40.dp.toPx()
+        val isQr = mode == ScannerMode.QR_CODE
+
+        val reticleWidth = if (isQr) size.minDimension * 0.7f else size.minDimension * 0.78f
+        val reticleHeight = if (isQr) reticleWidth else reticleWidth * 1.35f
+
+        val left = (size.width - reticleWidth) / 2
+        val top = (size.height - reticleHeight) / 2 - 30.dp.toPx()
         val cornerRadius = 24.dp.toPx()
 
         // Dim background outside reticle
@@ -497,8 +815,8 @@ fun QrScannerOverlay() {
                 RoundRect(
                     left = left,
                     top = top,
-                    right = left + squareSize,
-                    bottom = top + squareSize,
+                    right = left + reticleWidth,
+                    bottom = top + reticleHeight,
                     radiusX = cornerRadius,
                     radiusY = cornerRadius
                 )
@@ -511,19 +829,20 @@ fun QrScannerOverlay() {
         // Corner reticle accents
         val strokeWidth = 5.dp.toPx()
         val cornerLength = 32.dp.toPx()
-        val reticleColor = IncomeGreen // Emerald accent
+        val reticleColor = if (isQr) IncomeGreen else Color(0xFF8B5CF6)
+
+        val right = left + reticleWidth
+        val bottom = top + reticleHeight
 
         // Top Left
         drawLine(reticleColor, Offset(left, top + cornerLength), Offset(left, top + cornerRadius), strokeWidth)
         drawLine(reticleColor, Offset(left + cornerRadius, top), Offset(left + cornerLength, top), strokeWidth)
 
         // Top Right
-        val right = left + squareSize
         drawLine(reticleColor, Offset(right, top + cornerLength), Offset(right, top + cornerRadius), strokeWidth)
         drawLine(reticleColor, Offset(right - cornerRadius, top), Offset(right - cornerLength, top), strokeWidth)
 
         // Bottom Left
-        val bottom = top + squareSize
         drawLine(reticleColor, Offset(left, bottom - cornerLength), Offset(left, bottom - cornerRadius), strokeWidth)
         drawLine(reticleColor, Offset(left + cornerRadius, bottom), Offset(left + cornerLength, bottom), strokeWidth)
 
@@ -532,9 +851,9 @@ fun QrScannerOverlay() {
         drawLine(reticleColor, Offset(right - cornerRadius, bottom), Offset(right - cornerLength, bottom), strokeWidth)
 
         // Animated scan line
-        val scanY = top + (squareSize * laserPosition)
+        val scanY = top + (reticleHeight * laserPosition)
         drawLine(
-            color = IncomeGreen,
+            color = reticleColor,
             start = Offset(left + 16.dp.toPx(), scanY),
             end = Offset(right - 16.dp.toPx(), scanY),
             strokeWidth = 3.dp.toPx()

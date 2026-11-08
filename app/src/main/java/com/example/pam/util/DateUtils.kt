@@ -9,7 +9,7 @@ import java.util.Locale
 object DateUtils {
 
     private fun getFormatter(pattern: String): SimpleDateFormat {
-        return SimpleDateFormat(pattern, Locale.getDefault())
+        return SimpleDateFormat(pattern, Locale.US)
     }
 
     fun formatDateTime(millis: Long): String {

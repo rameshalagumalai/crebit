@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.pam.data.model.Account
 import com.example.pam.data.model.Category
 import com.example.pam.data.model.DateRangeType
+import com.example.pam.data.model.SplitGroupWithDetails
 import com.example.pam.data.model.TransactionType
 import com.example.pam.data.model.TransactionWithDetails
 import com.example.pam.data.repository.PAMRepository
@@ -30,8 +31,10 @@ data class TransactionsFilterState(
 data class TransactionsUiState(
     val filterState: TransactionsFilterState = TransactionsFilterState(),
     val transactions: List<TransactionWithDetails> = emptyList(),
+    val allTransactions: List<TransactionWithDetails> = emptyList(),
     val accounts: List<Account> = emptyList(),
     val categories: List<Category> = emptyList(),
+    val allSplits: List<SplitGroupWithDetails> = emptyList(),
     val totalFilteredIncome: Double = 0.0,
     val totalFilteredExpense: Double = 0.0,
     val isLoading: Boolean = false
@@ -60,6 +63,16 @@ class TransactionsViewModel(application: Application) : AndroidViewModel(applica
         viewModelScope.launch {
             repository.getCategoriesFlow().collectLatest { categories ->
                 _uiState.value = _uiState.value.copy(categories = categories)
+            }
+        }
+        viewModelScope.launch {
+            repository.getTransactionsFlow(limit = 1000).collectLatest { allTxns ->
+                _uiState.value = _uiState.value.copy(allTransactions = allTxns)
+            }
+        }
+        viewModelScope.launch {
+            repository.getSplitGroupsFlow().collectLatest { splits ->
+                _uiState.value = _uiState.value.copy(allSplits = splits)
             }
         }
     }

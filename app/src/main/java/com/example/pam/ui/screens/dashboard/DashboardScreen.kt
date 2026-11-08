@@ -1,9 +1,11 @@
 package com.example.pam.ui.screens.dashboard
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,16 +27,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.automirrored.filled.CallSplit
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.SyncAlt
+import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -42,7 +50,9 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -58,20 +68,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.pam.R
 import com.example.pam.data.model.DateRangeType
 import com.example.pam.data.model.FinancialOverview
 import com.example.pam.data.model.TransactionType
 import com.example.pam.data.model.TransactionWithDetails
+import com.example.pam.ui.components.AskCrebitBottomSheet
+import com.example.pam.ui.components.AskCrebitGlowingButton
 import com.example.pam.ui.components.ConfirmDeleteDialog
 import com.example.pam.ui.components.DateDividerChip
 import com.example.pam.ui.components.PAMEmptyState
+import com.example.pam.ui.components.SmartNarrativeDigestCard
+import com.example.pam.ui.components.SmartQuickAddBottomSheet
+import com.example.pam.util.ai.AnomalySeverity
+import com.example.pam.util.ai.AnomalyType
+import com.example.pam.util.ai.SpendingAnomaly
 import com.example.pam.ui.components.TransactionDetailsDialog
 import com.example.pam.ui.components.TransactionItemCard
 import com.example.pam.ui.theme.ExpenseRed
@@ -79,6 +101,7 @@ import com.example.pam.ui.theme.IncomeGreen
 import com.example.pam.ui.theme.ThemeManager
 import com.example.pam.ui.theme.ThemeMode
 import com.example.pam.ui.theme.TransferBlue
+import com.example.pam.ui.theme.WarningAmberDark
 import com.example.pam.util.CurrencyFormatter
 import com.example.pam.util.DateUtils
 import java.util.Calendar
@@ -92,11 +115,18 @@ fun DashboardScreen(
     onNavigateToTransactions: () -> Unit,
     onNavigateToAccounts: () -> Unit = {},
     onNavigateToSplits: () -> Unit = {},
+    onNavigateToScanReceipt: () -> Unit = onNavigateToScanUpi,
+    onNavigateToAddTransactionWithPrefill: (amount: Double?, title: String?, categoryId: Long?, accountId: Long?, initialType: TransactionType?, note: String?, dateMillis: Long?, isSplit: Boolean, splitCount: Int?) -> Unit = { _, _, _, _, type, _, _, isSplit, _ -> onNavigateToAddTransaction(type) },
     viewModel: DashboardViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val currentThemeMode by ThemeManager.themeMode.collectAsState()
     var showThemeMenu by remember { mutableStateOf(false) }
+    var showSmartQuickAdd by remember { mutableStateOf(false) }
+    var smartQuickAddStartVoice by remember { mutableStateOf(false) }
+    var showAskCrebitSheet by remember { mutableStateOf(false) }
+    var askCrebitStartVoice by remember { mutableStateOf(false) }
+    var askCrebitQuery by remember { mutableStateOf("") }
     var selectedTransactionForDetails by remember { mutableStateOf<TransactionWithDetails?>(null) }
     var selectedTransactionIds by remember { mutableStateOf(emptySet<Long>()) }
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
@@ -157,27 +187,18 @@ fun DashboardScreen(
                 TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_crebit_logo),
+                            contentDescription = "Crebit Logo",
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            MaterialTheme.colorScheme.primary,
-                                            MaterialTheme.colorScheme.secondary
-                                        )
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Crebit",
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                        )
 
                         Spacer(modifier = Modifier.width(12.dp))
 
@@ -347,8 +368,114 @@ fun DashboardScreen(
                     overview = uiState.periodOverview,
                     selectedPeriod = uiState.selectedPeriod,
                     onPeriodSelected = { viewModel.onPeriodSelected(it) },
+                    onAskCrebitClick = {
+                        askCrebitStartVoice = false
+                        showAskCrebitSheet = true
+                    },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                 )
+            }
+
+            // Smart Natural Language Quick Log Trigger Card
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable {
+                            smartQuickAddStartVoice = false
+                            showSmartQuickAdd = true
+                        },
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 14.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(
+                                            MaterialTheme.colorScheme.primary,
+                                            Color(0xFF8B5CF6)
+                                        )
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+//                        Icon(
+//                            imageVector = Icons.Default.AutoAwesome,
+//                            contentDescription = null,
+//                            tint = MaterialTheme.colorScheme.primary,
+//                            modifier = Modifier.size(20.dp)
+//                        )
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Text(
+                            text = "Log with AI: \"Coffee 180 cash\"...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedIconButton(
+                                onClick = onNavigateToScanReceipt,
+                                modifier = Modifier.size(34.dp),
+                                shape = CircleShape,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                                colors = IconButtonDefaults.outlinedIconButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                    contentDescription = "Scan Receipt",
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+
+                            OutlinedIconButton(
+                                onClick = {
+                                    smartQuickAddStartVoice = true
+                                    showSmartQuickAdd = true
+                                },
+                                modifier = Modifier.size(34.dp),
+                                shape = CircleShape,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+                                colors = IconButtonDefaults.outlinedIconButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = "Voice Input",
+                                    modifier = Modifier.size(17.dp)
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             // Quick Actions 2x2 Neo-Fintech Grid
@@ -464,6 +591,37 @@ fun DashboardScreen(
                 }
             }
 
+            // AI Spending Insights & Anomalies Card
+            if (uiState.activeAnomalies.isNotEmpty()) {
+                item {
+                    AISpendingInsightsSection(
+                        anomalies = uiState.activeAnomalies,
+                        onDismissAnomaly = { viewModel.dismissAnomaly(it) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            // Smart Narrative Digest Card (Feature 6)
+            if (uiState.smartDigest != null && uiState.smartDigest!!.insights.isNotEmpty()) {
+                item {
+                    SmartNarrativeDigestCard(
+                        digest = uiState.smartDigest!!,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        onInsightClick = { insight ->
+                            if (insight.filterQuery != null) {
+                                askCrebitQuery = insight.filterQuery
+                                showAskCrebitSheet = true
+                            }
+                        }
+                    )
+                }
+            }
+
             // "The Receipts" Section Header
             item {
                 Row(
@@ -574,6 +732,66 @@ fun DashboardScreen(
             onDismiss = { showBatchDeleteConfirm = false }
         )
     }
+
+    if (showSmartQuickAdd) {
+        SmartQuickAddBottomSheet(
+            accounts = uiState.accounts,
+            categories = uiState.categories,
+            recentTransactions = uiState.recentTransactions,
+            startWithVoice = smartQuickAddStartVoice,
+            onSaveTransaction = { txn, isSplit, splitCount ->
+                viewModel.saveQuickTransaction(txn, isSplit, splitCount)
+            },
+            onOpenFullEditor = { draft ->
+                showSmartQuickAdd = false
+                smartQuickAddStartVoice = false
+                onNavigateToAddTransactionWithPrefill(
+                    draft.amount,
+                    draft.title,
+                    draft.matchedCategory?.id,
+                    draft.matchedAccount?.id,
+                    draft.type,
+                    draft.rawInput,
+                    draft.dateEpochMillis,
+                    draft.isSplit,
+                    draft.splitPeopleCount
+                )
+            },
+            onScanReceipt = {
+                showSmartQuickAdd = false
+                smartQuickAddStartVoice = false
+                onNavigateToScanReceipt()
+            },
+            onClose = {
+                showSmartQuickAdd = false
+                smartQuickAddStartVoice = false
+            }
+        )
+    }
+
+    if (showAskCrebitSheet) {
+        AskCrebitBottomSheet(
+            allTransactions = uiState.allTransactions,
+            accounts = uiState.accounts,
+            categories = uiState.categories,
+            splits = uiState.allSplits,
+            initialQuery = askCrebitQuery,
+            startWithVoice = askCrebitStartVoice,
+            onDismiss = {
+                showAskCrebitSheet = false
+                askCrebitStartVoice = false
+                askCrebitQuery = ""
+            },
+            onEditTransaction = { id ->
+                showAskCrebitSheet = false
+                askCrebitQuery = ""
+                onNavigateToTransactionDetail(id)
+            },
+            onDeleteTransaction = { id ->
+                viewModel.deleteTransaction(id)
+            }
+        )
+    }
 }
 
 @Composable
@@ -633,6 +851,7 @@ fun DashboardOverviewCard(
     overview: FinancialOverview,
     selectedPeriod: DateRangeType,
     onPeriodSelected: (DateRangeType) -> Unit,
+    onAskCrebitClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     Card(
@@ -685,44 +904,58 @@ fun DashboardOverviewCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Net Amount Display
-            Text(
-                text = "Net Amount",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(2.dp))
+            // Net Amount Display with Infinite Animated Glowing Circular Ask Crebit Button
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = CurrencyFormatter.format(overview.netSavings),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                if (overview.totalIncome > 0.0 || overview.totalExpense > 0.0) {
-                    val isPositive = overview.netSavings >= 0
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(
-                                if (isPositive) IncomeGreen.copy(alpha = 0.12f)
-                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
-                            )
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                Column(modifier = Modifier.weight(1f, fill = false)) {
+                    Text(
+                        text = "Net Amount",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = if (isPositive) "Positive" else "Deficit",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isPositive) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                            text = CurrencyFormatter.format(overview.netSavings),
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
+
+                        if (overview.totalIncome > 0.0 || overview.totalExpense > 0.0) {
+                            val isPositive = overview.netSavings >= 0
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(
+                                        if (isPositive) IncomeGreen.copy(alpha = 0.12f)
+                                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Text(
+                                    text = if (isPositive) "Positive" else "Deficit",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isPositive) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
+
+                // Glowing Animated Ask Crebit AI Button
+                AskCrebitGlowingButton(
+                    onClick = onAskCrebitClick,
+                    modifier = Modifier.padding(start = 12.dp)
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -848,6 +1081,183 @@ private fun PeriodToggleChip(
             color = if (isSelected) MaterialTheme.colorScheme.onPrimary
             else MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun AISpendingInsightsSection(
+    anomalies: List<SpendingAnomaly>,
+    onDismissAnomaly: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val isDark = isSystemInDarkTheme()
+
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            // Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        MaterialTheme.colorScheme.primary,
+                                        Color(0xFF8B5CF6)
+                                    )
+                                )
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.TrendingUp,
+                            contentDescription = "Insights",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                    Text(
+                        text = "AI Spending Insights",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                val hasCritical = anomalies.any { it.severity == AnomalySeverity.ALERT }
+                val badgeColor = if (hasCritical) {
+                    if (isDark) Color(0xFFF87171) else ExpenseRed
+                } else {
+                    if (isDark) WarningAmberDark else Color(0xFFD97706)
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = badgeColor.copy(alpha = 0.12f)
+                ) {
+                    Text(
+                        text = "${anomalies.size} ${if (anomalies.size == 1) "Insight" else "Insights"}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = badgeColor,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Anomaly item list
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                anomalies.forEach { anomaly ->
+                    val accentColor = when (anomaly.severity) {
+                        AnomalySeverity.ALERT -> if (isDark) Color(0xFFF87171) else ExpenseRed
+                        AnomalySeverity.WARNING -> if (isDark) WarningAmberDark else Color(0xFFD97706)
+                        AnomalySeverity.INFO -> if (isDark) Color(0xFFA78BFA) else Color(0xFF7C3AED)
+                    }
+
+                    val icon = when (anomaly.type) {
+                        AnomalyType.CATEGORY_SPIKE -> Icons.AutoMirrored.Filled.TrendingUp
+                        AnomalyType.UNUSUALLY_LARGE_EXPENSE -> Icons.Default.WarningAmber
+                        AnomalyType.DAILY_SURGE -> Icons.Default.Bolt
+                        AnomalyType.DUPLICATE_TRANSACTION -> Icons.Default.WarningAmber
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isDark) accentColor.copy(alpha = 0.08f) else MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, accentColor.copy(alpha = if (isDark) 0.32f else 0.22f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(accentColor.copy(alpha = 0.14f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    tint = accentColor,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = anomaly.title,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    if (anomaly.ratio != null) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = accentColor.copy(alpha = 0.14f)
+                                        ) {
+                                            Text(
+                                                text = "${String.format(java.util.Locale.US, "%.1f", anomaly.ratio)}×",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = accentColor,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(2.dp))
+
+                                Text(
+                                    text = anomaly.message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    lineHeight = 16.sp
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { onDismissAnomaly(anomaly.id) },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Dismiss",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
