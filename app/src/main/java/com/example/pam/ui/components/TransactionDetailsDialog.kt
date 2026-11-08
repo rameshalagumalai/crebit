@@ -2,7 +2,6 @@ package com.example.pam.ui.components
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
-import android.text.format.DateFormat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -660,7 +659,7 @@ fun TransactionDetailsDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "People (inc. you)",
+                                text = "Split ways (inc. you)",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -944,7 +943,7 @@ fun TransactionDetailsDialog(
                                             },
                                             cal.get(Calendar.HOUR_OF_DAY),
                                             cal.get(Calendar.MINUTE),
-                                            DateFormat.is24HourFormat(context)
+                                            false // 12-hour format (AM/PM)
                                         ).show()
                                     }
                             )

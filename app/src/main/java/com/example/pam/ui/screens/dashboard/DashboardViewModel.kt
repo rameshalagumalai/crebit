@@ -18,17 +18,33 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+import com.example.pam.data.model.Category
+import com.example.pam.data.model.SplitGroupWithDetails
+import com.example.pam.data.model.Transaction
+import com.example.pam.data.model.TransactionType
+import com.example.pam.util.ai.SpendingAnomaly
+import com.example.pam.util.ai.SpendingAnomalyDetector
+import com.example.pam.util.ai.SmartNarrativeDigest
+import com.example.pam.util.ai.SmartNarrativeDigestEngine
+
 data class DashboardUiState(
     val totalBalance: Double = 0.0,
     val selectedPeriod: DateRangeType = DateRangeType.THIS_MONTH,
     val periodOverview: FinancialOverview = FinancialOverview(0.0, 0.0, 0.0, 0f, 0),
     val accounts: List<Account> = emptyList(),
+    val categories: List<Category> = emptyList(),
+    val allTransactions: List<TransactionWithDetails> = emptyList(),
     val recentTransactions: List<TransactionWithDetails> = emptyList(),
+    val allSplits: List<SplitGroupWithDetails> = emptyList(),
+    val anomalies: List<SpendingAnomaly> = emptyList(),
+    val dismissedAnomalyIds: Set<String> = emptySet(),
     val totalReceivable: Double = 0.0,
     val activeSplitsCount: Int = 0,
+    val smartDigest: SmartNarrativeDigest? = null,
     val isLoading: Boolean = true
 ) {
     val monthlyOverview: FinancialOverview get() = periodOverview
+    val activeAnomalies: List<SpendingAnomaly> get() = anomalies.filter { it.id !in dismissedAnomalyIds }
 }
 
 class DashboardViewModel(application: Application) : AndroidViewModel(application) {
@@ -67,8 +83,23 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         viewModelScope.launch {
-            repository.getTransactionsFlow(limit = 15).collectLatest { txns ->
-                _uiState.update { it.copy(recentTransactions = txns) }
+            repository.getCategoriesFlow().collectLatest { cats ->
+                _uiState.update { it.copy(categories = cats) }
+                recomputeDigest()
+            }
+        }
+
+        viewModelScope.launch {
+            repository.getTransactionsFlow(limit = 1000).collectLatest { allTxns ->
+                val detected = SpendingAnomalyDetector.detectSpendingAnomalies(allTxns)
+                _uiState.update {
+                    it.copy(
+                        allTransactions = allTxns,
+                        recentTransactions = allTxns.take(15),
+                        anomalies = detected
+                    )
+                }
+                recomputeDigest()
             }
         }
 
@@ -78,10 +109,12 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 val receivable = active.sumOf { it.remainingAmount }
                 _uiState.update {
                     it.copy(
+                        allSplits = splits,
                         totalReceivable = receivable,
                         activeSplitsCount = active.size
                     )
                 }
+                recomputeDigest()
             }
         }
 
@@ -93,10 +126,23 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
                 overviewJob = viewModelScope.launch {
                     repository.getReportsFlow(startDate, endDate).collectLatest { (overview, _, _) ->
                         _uiState.update { it.copy(periodOverview = overview) }
+                        recomputeDigest()
                     }
                 }
             }
         }
+    }
+
+    private fun recomputeDigest() {
+        val currentState = _uiState.value
+        val digest = SmartNarrativeDigestEngine.generateDigest(
+            transactions = currentState.allTransactions,
+            overview = currentState.periodOverview,
+            dateRangeType = currentState.selectedPeriod,
+            splits = currentState.allSplits,
+            categories = currentState.categories
+        )
+        _uiState.update { it.copy(smartDigest = digest) }
     }
 
     fun onPeriodSelected(period: DateRangeType) {
@@ -115,6 +161,30 @@ class DashboardViewModel(application: Application) : AndroidViewModel(applicatio
         if (ids.isEmpty()) return
         viewModelScope.launch {
             repository.deleteTransactions(ids.toList())
+        }
+    }
+
+    fun dismissAnomaly(anomalyId: String) {
+        _uiState.update { it.copy(dismissedAnomalyIds = it.dismissedAnomalyIds + anomalyId) }
+    }
+
+    fun saveQuickTransaction(transaction: Transaction, isSplit: Boolean, splitPeopleCount: Int) {
+        viewModelScope.launch {
+            if (isSplit && transaction.type == TransactionType.EXPENSE) {
+                val people = maxOf(2, splitPeopleCount)
+                val myShare = transaction.amount / people
+                repository.createSplitExpense(
+                    title = transaction.title,
+                    totalAmount = transaction.amount,
+                    myShare = myShare,
+                    accountId = transaction.accountId,
+                    categoryId = transaction.categoryId ?: 1L,
+                    dateEpochMillis = transaction.dateEpochMillis,
+                    note = transaction.note
+                )
+            } else {
+                repository.addTransaction(transaction)
+            }
         }
     }
 }

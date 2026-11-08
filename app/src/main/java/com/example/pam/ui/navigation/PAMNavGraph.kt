@@ -91,6 +91,24 @@ fun PAMNavGraph(
                         launchSingleTop = true
                         restoreState = true
                     }
+                },
+                onNavigateToScanReceipt = {
+                    navController.navigate(Screen.UpiQrScanner.createRoute(initialMode = "RECEIPT"))
+                },
+                onNavigateToAddTransactionWithPrefill = { amount, title, catId, accId, type, note, dateMillis, isSplit, splitCount ->
+                    navController.navigate(
+                        Screen.AddEditTransaction.createRoute(
+                            prefillAmount = amount,
+                            prefillTitle = title,
+                            prefillCategoryId = catId,
+                            prefillAccountId = accId,
+                            initialType = type,
+                            prefillNote = note,
+                            prefillDate = dateMillis,
+                            enableSplit = isSplit,
+                            prefillSplitPeopleCount = splitCount
+                        )
+                    )
                 }
             )
         }
@@ -156,13 +174,55 @@ fun PAMNavGraph(
                     type = NavType.StringType
                     nullable = true
                     defaultValue = null
+                },
+                navArgument("prefillAmount") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("prefillTitle") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("prefillCategoryId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("prefillAccountId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("prefillDate") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("prefillNote") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+                navArgument("prefillSplitPeopleCount") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
                 }
             )
         ) { backStackEntry ->
             val idParam = backStackEntry.arguments?.getString("transactionId")?.takeIf { it.isNotBlank() }
             val upiParam = backStackEntry.arguments?.getString("scannedUpi")?.takeIf { it.isNotBlank() }
             val typeParam = backStackEntry.arguments?.getString("initialType")?.takeIf { it.isNotBlank() }
-            val enableSplitParam = backStackEntry.arguments?.getString("enableSplit") == "true"
+            val prefillSplitPeopleCountParam = backStackEntry.arguments?.getString("prefillSplitPeopleCount")?.takeIf { it.isNotBlank() }?.toIntOrNull()
+            val enableSplitParam = backStackEntry.arguments?.getString("enableSplit") == "true" || (prefillSplitPeopleCountParam != null && prefillSplitPeopleCountParam >= 2)
+            val prefillAmountParam = backStackEntry.arguments?.getString("prefillAmount")?.takeIf { it.isNotBlank() }?.toDoubleOrNull()
+            val prefillTitleParam = backStackEntry.arguments?.getString("prefillTitle")?.takeIf { it.isNotBlank() }
+            val prefillCategoryIdParam = backStackEntry.arguments?.getString("prefillCategoryId")?.takeIf { it.isNotBlank() }?.toLongOrNull()
+            val prefillAccountIdParam = backStackEntry.arguments?.getString("prefillAccountId")?.takeIf { it.isNotBlank() }?.toLongOrNull()
+            val prefillDateParam = backStackEntry.arguments?.getString("prefillDate")?.takeIf { it.isNotBlank() }?.toLongOrNull()
+            val prefillNoteParam = backStackEntry.arguments?.getString("prefillNote")?.takeIf { it.isNotBlank() }
             val resolvedType = typeParam?.let {
                 try {
                     com.example.pam.data.model.TransactionType.valueOf(it)
@@ -176,20 +236,51 @@ fun PAMNavGraph(
                 scannedUpi = upiParam,
                 initialType = resolvedType,
                 enableSplit = enableSplitParam,
+                prefillAmount = prefillAmountParam,
+                prefillTitle = prefillTitleParam,
+                prefillCategoryId = prefillCategoryIdParam,
+                prefillAccountId = prefillAccountIdParam,
+                prefillDate = prefillDateParam,
+                prefillNote = prefillNoteParam,
+                prefillSplitPeopleCount = prefillSplitPeopleCountParam,
                 onNavigateBack = {
                     navController.popBackStack()
                 }
             )
         }
 
-        composable(Screen.UpiQrScanner.route) {
+        composable(
+            route = Screen.UpiQrScanner.route,
+            arguments = listOf(
+                navArgument("initialMode") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                }
+            )
+        ) { backStackEntry ->
+            val initialModeParam = backStackEntry.arguments?.getString("initialMode")
             UpiQrScannerScreen(
+                initialModeStr = initialModeParam,
                 onNavigateBack = {
                     navController.popBackStack()
                 },
                 onQrCodeDetected = { scannedContent ->
                     navController.popBackStack()
                     navController.navigate(Screen.AddEditTransaction.createRoute(scannedUpi = scannedContent))
+                },
+                onNavigateToAddTransactionWithReceipt = { amount, merchant, categoryId, accountId, dateMillis, note ->
+                    navController.popBackStack()
+                    navController.navigate(
+                        Screen.AddEditTransaction.createRoute(
+                            prefillAmount = amount,
+                            prefillTitle = merchant,
+                            prefillCategoryId = categoryId,
+                            prefillAccountId = accountId,
+                            prefillDate = dateMillis,
+                            prefillNote = note
+                        )
+                    )
                 }
             )
         }

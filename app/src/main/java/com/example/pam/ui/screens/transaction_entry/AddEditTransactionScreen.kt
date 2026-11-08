@@ -2,7 +2,6 @@ package com.example.pam.ui.screens.transaction_entry
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
-import android.text.format.DateFormat
 import android.widget.DatePicker
 import android.widget.TimePicker
 import androidx.compose.foundation.BorderStroke
@@ -33,6 +32,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.CallSplit
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -103,6 +105,7 @@ import com.example.pam.data.model.Account
 import com.example.pam.data.model.Category
 import com.example.pam.data.model.TransactionType
 import com.example.pam.ui.components.ConfirmDeleteDialog
+import com.example.pam.ui.components.DuplicateWarningCard
 import com.example.pam.ui.theme.IncomeGreen
 import com.example.pam.ui.theme.toComposeColor
 import com.example.pam.util.CurrencyFormatter
@@ -119,6 +122,13 @@ fun AddEditTransactionScreen(
     scannedUpi: String? = null,
     initialType: TransactionType? = null,
     enableSplit: Boolean = false,
+    prefillAmount: Double? = null,
+    prefillTitle: String? = null,
+    prefillCategoryId: Long? = null,
+    prefillAccountId: Long? = null,
+    prefillDate: Long? = null,
+    prefillNote: String? = null,
+    prefillSplitPeopleCount: Int? = null,
     onNavigateBack: () -> Unit,
     viewModel: AddEditTransactionViewModel = viewModel()
 ) {
@@ -134,8 +144,20 @@ fun AddEditTransactionScreen(
     var showCategorySheet by remember { mutableStateOf(false) }
     var showMoreDetails by remember { mutableStateOf(false) }
 
-    LaunchedEffect(transactionId, scannedUpi, initialType, enableSplit) {
-        viewModel.initData(transactionId, scannedUpi, initialType, enableSplit)
+    LaunchedEffect(transactionId, scannedUpi, initialType, enableSplit, prefillAmount, prefillTitle, prefillCategoryId, prefillAccountId, prefillDate, prefillNote, prefillSplitPeopleCount) {
+        viewModel.initData(
+            transactionId = transactionId,
+            scannedUpiString = scannedUpi,
+            initialType = initialType,
+            enableSplit = enableSplit,
+            prefillAmount = prefillAmount,
+            prefillTitle = prefillTitle,
+            prefillCategoryId = prefillCategoryId,
+            prefillAccountId = prefillAccountId,
+            prefillDate = prefillDate,
+            prefillNote = prefillNote,
+            prefillSplitPeopleCount = prefillSplitPeopleCount
+        )
     }
 
     LaunchedEffect(Unit) {
@@ -190,7 +212,7 @@ fun AddEditTransactionScreen(
         },
         cal.get(Calendar.HOUR_OF_DAY),
         cal.get(Calendar.MINUTE),
-        DateFormat.is24HourFormat(context)
+        false // 12-hour format (AM/PM)
     )
 
     val selectedAccount = uiState.accounts.firstOrNull { it.id == uiState.selectedAccountId }
@@ -277,6 +299,20 @@ fun AddEditTransactionScreen(
                         .padding(horizontal = 16.dp, vertical = 12.dp)
                         .navigationBarsPadding()
                 ) {
+                    // Duplicate Expense Warning Banner
+                    AnimatedVisibility(
+                        visible = uiState.duplicateWarning != null,
+                        enter = fadeIn(),
+                        exit = fadeOut()
+                    ) {
+                        uiState.duplicateWarning?.let { warning ->
+                            DuplicateWarningCard(
+                                warning = warning,
+                                modifier = Modifier.padding(bottom = 10.dp)
+                            )
+                        }
+                    }
+
                     if (uiState.isUpiScanned || uiState.payeeUpiId.isNotBlank()) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -284,6 +320,7 @@ fun AddEditTransactionScreen(
                         ) {
                             OutlinedButton(
                                 onClick = { viewModel.saveTransaction() },
+                                enabled = !uiState.isSaving,
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(54.dp),
@@ -297,6 +334,7 @@ fun AddEditTransactionScreen(
 
                             Button(
                                 onClick = { viewModel.payViaUpi(context) },
+                                enabled = !uiState.isSaving,
                                 modifier = Modifier
                                     .weight(1.3f)
                                     .height(54.dp),
@@ -330,6 +368,7 @@ fun AddEditTransactionScreen(
 
                         Button(
                             onClick = { viewModel.saveTransaction() },
+                            enabled = !uiState.isSaving,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(54.dp),
@@ -836,7 +875,7 @@ fun AddEditTransactionScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "Total people (inc. you)",
+                                            text = "Split ways (inc. you)",
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.SemiBold
                                         )

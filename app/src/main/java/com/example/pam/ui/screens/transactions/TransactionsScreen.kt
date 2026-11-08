@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
@@ -62,6 +63,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.pam.data.model.DateRangeType
 import com.example.pam.data.model.TransactionType
 import com.example.pam.data.model.TransactionWithDetails
+import com.example.pam.ui.components.AskCrebitBottomSheet
 import com.example.pam.ui.components.ConfirmDeleteDialog
 import com.example.pam.ui.components.DateDividerChip
 import com.example.pam.ui.components.PAMDateRangePickerDialog
@@ -82,6 +84,7 @@ fun TransactionsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     var showFilterSheet by remember { mutableStateOf(false) }
+    var showAskCrebitSheet by remember { mutableStateOf(false) }
     var selectedTransactionForDetails by remember { mutableStateOf<TransactionWithDetails?>(null) }
     var selectedTransactionIds by remember { mutableStateOf(emptySet<Long>()) }
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
@@ -226,9 +229,18 @@ fun TransactionsScreen(
                     Icon(imageVector = Icons.Default.Search, contentDescription = "Search")
                 },
                 trailingIcon = {
-                    if (uiState.filterState.searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.onSearchQueryChanged("") }) {
-                            Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear search")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (uiState.filterState.searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { viewModel.onSearchQueryChanged("") }) {
+                                Icon(imageVector = Icons.Default.Clear, contentDescription = "Clear search")
+                            }
+                        }
+                        IconButton(onClick = { showAskCrebitSheet = true }) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = "Ask Crebit AI",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
                 },
@@ -500,6 +512,24 @@ fun TransactionsScreen(
             },
             onDelete = { id ->
                 selectedTransactionForDetails = null
+                viewModel.deleteTransaction(id)
+            }
+        )
+    }
+
+    if (showAskCrebitSheet) {
+        AskCrebitBottomSheet(
+            allTransactions = uiState.allTransactions,
+            accounts = uiState.accounts,
+            categories = uiState.categories,
+            splits = uiState.allSplits,
+            initialQuery = uiState.filterState.searchQuery,
+            onDismiss = { showAskCrebitSheet = false },
+            onEditTransaction = { id ->
+                showAskCrebitSheet = false
+                onNavigateToTransactionDetail(id)
+            },
+            onDeleteTransaction = { id ->
                 viewModel.deleteTransaction(id)
             }
         )

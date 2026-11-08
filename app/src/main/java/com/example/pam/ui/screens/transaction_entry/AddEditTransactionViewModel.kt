@@ -8,9 +8,12 @@ import com.example.pam.data.model.Account
 import com.example.pam.data.model.Category
 import com.example.pam.data.model.Transaction
 import com.example.pam.data.model.TransactionType
+import com.example.pam.data.model.TransactionWithDetails
 import com.example.pam.data.repository.PAMRepository
 import com.example.pam.util.UpiLaunchResult
 import com.example.pam.util.UpiParser
+import com.example.pam.util.ai.DuplicateDetectionResult
+import com.example.pam.util.ai.SpendingAnomalyDetector
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -18,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 enum class SplitMode {
@@ -50,8 +54,29 @@ data class AddEditTransactionUiState(
     val splitMode: SplitMode = SplitMode.EQUAL,
     val splitPeopleCount: Int = 2,
     val customMyShareText: String = "",
-    val existingSplitGroupId: Long? = null
+    val existingSplitGroupId: Long? = null,
+    val recentTransactions: List<TransactionWithDetails> = emptyList(),
+    val isSaving: Boolean = false
 ) {
+    val duplicateWarning: DuplicateDetectionResult?
+        get() {
+            if (isEditMode || isSaving) return null
+            if (type != TransactionType.EXPENSE) return null
+            val amt = amountText.toDoubleOrNull() ?: return null
+            if (amt <= 0.0) return null
+            val catName = categories.firstOrNull { it.id == selectedCategoryId }?.name
+            return SpendingAnomalyDetector.checkForDuplicate(
+                candidateAmount = amt,
+                candidateTitle = title,
+                candidateType = type,
+                candidateCategoryName = catName,
+                candidateAccountId = selectedAccountId,
+                candidateDateEpochMillis = dateEpochMillis,
+                recentTransactions = recentTransactions,
+                excludeTransactionId = transactionId
+            )
+        }
+
     val computedMyShare: Double
         get() {
             val total = amountText.toDoubleOrNull() ?: 0.0
@@ -115,9 +140,26 @@ class AddEditTransactionViewModel(application: Application) : AndroidViewModel(a
                 )
             }
         }
+        viewModelScope.launch {
+            repository.getTransactionsFlow(limit = 100).collectLatest { txns ->
+                _uiState.update { it.copy(recentTransactions = txns) }
+            }
+        }
     }
 
-    fun initData(transactionId: Long?, scannedUpiString: String?, initialType: TransactionType?, enableSplit: Boolean = false) {
+    fun initData(
+        transactionId: Long?,
+        scannedUpiString: String?,
+        initialType: TransactionType?,
+        enableSplit: Boolean = false,
+        prefillAmount: Double? = null,
+        prefillTitle: String? = null,
+        prefillCategoryId: Long? = null,
+        prefillAccountId: Long? = null,
+        prefillDate: Long? = null,
+        prefillNote: String? = null,
+        prefillSplitPeopleCount: Int? = null
+    ) {
         if (transactionId != null && transactionId > 0) {
             viewModelScope.launch {
                 val txnWithDetails = repository.getTransactionWithDetails(transactionId)
@@ -181,19 +223,43 @@ class AddEditTransactionViewModel(application: Application) : AndroidViewModel(a
                     isUpiScanned = true,
                     rawUpiUri = parsedUpi.rawUri,
                     rawUpiParams = parsedUpi.rawParams,
-                    isSplitEnabled = enableSplit
+                    isSplitEnabled = enableSplit || (prefillSplitPeopleCount != null && prefillSplitPeopleCount >= 2),
+                    splitPeopleCount = prefillSplitPeopleCount ?: 2
                 )
             }
         } else {
+            var updated = _uiState.value
             if (initialType != null) {
-                _uiState.value = _uiState.value.copy(type = initialType)
+                updated = updated.copy(type = initialType)
             }
-            if (enableSplit) {
-                _uiState.value = _uiState.value.copy(
+            if (enableSplit || (prefillSplitPeopleCount != null && prefillSplitPeopleCount >= 2)) {
+                updated = updated.copy(
                     type = TransactionType.EXPENSE,
-                    isSplitEnabled = true
+                    isSplitEnabled = true,
+                    splitPeopleCount = prefillSplitPeopleCount ?: 2
                 )
             }
+            if (prefillAmount != null && prefillAmount > 0) {
+                updated = updated.copy(
+                    amountText = if (prefillAmount % 1.0 == 0.0) prefillAmount.toLong().toString() else String.format(java.util.Locale.US, "%.2f", prefillAmount)
+                )
+            }
+            if (!prefillTitle.isNullOrBlank()) {
+                updated = updated.copy(title = prefillTitle)
+            }
+            if (prefillCategoryId != null && prefillCategoryId > 0) {
+                updated = updated.copy(selectedCategoryId = prefillCategoryId)
+            }
+            if (prefillAccountId != null && prefillAccountId > 0) {
+                updated = updated.copy(selectedAccountId = prefillAccountId)
+            }
+            if (prefillDate != null && prefillDate > 0) {
+                updated = updated.copy(dateEpochMillis = prefillDate)
+            }
+            if (!prefillNote.isNullOrBlank()) {
+                updated = updated.copy(note = prefillNote)
+            }
+            _uiState.value = updated
         }
     }
 
@@ -308,6 +374,8 @@ class AddEditTransactionViewModel(application: Application) : AndroidViewModel(a
 
     fun saveTransaction() {
         val state = _uiState.value
+        if (state.isSaving) return
+
         val amount = state.amountText.toDoubleOrNull()
         if (amount == null || amount <= 0.0) {
             viewModelScope.launch {
@@ -341,79 +409,86 @@ class AddEditTransactionViewModel(application: Application) : AndroidViewModel(a
             }
         }
 
-        viewModelScope.launch {
-            if (state.type == TransactionType.EXPENSE && state.isSplitEnabled) {
-                val myShare = state.computedMyShare
-                val splitCatId = repository.getOrCreateSplitCategory()
-                val selectedCatId = state.selectedCategoryId ?: splitCatId
+        _uiState.update { it.copy(isSaving = true) }
 
-                if (state.isEditMode && state.existingSplitGroupId != null) {
-                    repository.updateSplitExpense(
-                        splitGroupId = state.existingSplitGroupId,
-                        title = title,
-                        totalAmount = amount,
-                        myShare = myShare,
-                        accountId = accountId,
-                        categoryId = selectedCatId,
-                        dateEpochMillis = state.dateEpochMillis,
-                        note = state.note.trim().ifBlank { null }
-                    )
-                } else if (state.isEditMode && state.transactionId != null && state.existingSplitGroupId == null) {
-                    val receivable = maxOf(0.0, amount - myShare)
-                    repository.splitExistingExpense(
-                        transactionId = state.transactionId,
-                        myShare = myShare,
-                        receivableAmount = receivable
-                    )
+        viewModelScope.launch {
+            try {
+                if (state.type == TransactionType.EXPENSE && state.isSplitEnabled) {
+                    val myShare = state.computedMyShare
+                    val splitCatId = repository.getOrCreateSplitCategory()
+                    val selectedCatId = state.selectedCategoryId ?: splitCatId
+
+                    if (state.isEditMode && state.existingSplitGroupId != null) {
+                        repository.updateSplitExpense(
+                            splitGroupId = state.existingSplitGroupId,
+                            title = title,
+                            totalAmount = amount,
+                            myShare = myShare,
+                            accountId = accountId,
+                            categoryId = selectedCatId,
+                            dateEpochMillis = state.dateEpochMillis,
+                            note = state.note.trim().ifBlank { null }
+                        )
+                    } else if (state.isEditMode && state.transactionId != null && state.existingSplitGroupId == null) {
+                        val receivable = maxOf(0.0, amount - myShare)
+                        repository.splitExistingExpense(
+                            transactionId = state.transactionId,
+                            myShare = myShare,
+                            receivableAmount = receivable
+                        )
+                    } else {
+                        repository.createSplitExpense(
+                            title = title,
+                            totalAmount = amount,
+                            myShare = myShare,
+                            accountId = accountId,
+                            categoryId = selectedCatId,
+                            dateEpochMillis = state.dateEpochMillis,
+                            note = state.note.trim().ifBlank { null },
+                            payeeUpiId = state.payeeUpiId.trim().ifBlank { null },
+                            payeeName = state.payeeName.trim().ifBlank { null },
+                            upiRefId = state.upiRefId.trim().ifBlank { null },
+                            rawUpiUri = state.rawUpiUri
+                        )
+                    }
                 } else {
-                    repository.createSplitExpense(
+                    val txn = Transaction(
+                        id = state.transactionId ?: 0,
                         title = title,
-                        totalAmount = amount,
-                        myShare = myShare,
+                        amount = amount,
+                        type = state.type,
                         accountId = accountId,
-                        categoryId = selectedCatId,
+                        toAccountId = if (state.type == TransactionType.TRANSFER) state.selectedToAccountId else null,
+                        categoryId = if (state.type != TransactionType.TRANSFER) state.selectedCategoryId else null,
                         dateEpochMillis = state.dateEpochMillis,
                         note = state.note.trim().ifBlank { null },
                         payeeUpiId = state.payeeUpiId.trim().ifBlank { null },
                         payeeName = state.payeeName.trim().ifBlank { null },
                         upiRefId = state.upiRefId.trim().ifBlank { null },
-                        rawUpiUri = state.rawUpiUri
+                        splitGroupId = null
                     )
-                }
-            } else {
-                val txn = Transaction(
-                    id = state.transactionId ?: 0,
-                    title = title,
-                    amount = amount,
-                    type = state.type,
-                    accountId = accountId,
-                    toAccountId = if (state.type == TransactionType.TRANSFER) state.selectedToAccountId else null,
-                    categoryId = if (state.type != TransactionType.TRANSFER) state.selectedCategoryId else null,
-                    dateEpochMillis = state.dateEpochMillis,
-                    note = state.note.trim().ifBlank { null },
-                    payeeUpiId = state.payeeUpiId.trim().ifBlank { null },
-                    payeeName = state.payeeName.trim().ifBlank { null },
-                    upiRefId = state.upiRefId.trim().ifBlank { null },
-                    splitGroupId = null
-                )
 
-                if (state.isEditMode && state.transactionId != null) {
-                    if (state.existingSplitGroupId != null) {
-                        repository.removeSplitFromExpense(
-                            splitGroupId = state.existingSplitGroupId,
-                            keepTransactionId = state.transactionId,
-                            totalAmount = amount
-                        )
-                        repository.updateTransaction(txn.copy(splitGroupId = null))
+                    if (state.isEditMode && state.transactionId != null) {
+                        if (state.existingSplitGroupId != null) {
+                            repository.removeSplitFromExpense(
+                                splitGroupId = state.existingSplitGroupId,
+                                keepTransactionId = state.transactionId,
+                                totalAmount = amount
+                            )
+                            repository.updateTransaction(txn.copy(splitGroupId = null))
+                        } else {
+                            repository.updateTransaction(txn)
+                        }
                     } else {
-                        repository.updateTransaction(txn)
+                        repository.addTransaction(txn)
                     }
-                } else {
-                    repository.addTransaction(txn)
                 }
-            }
 
-            _eventFlow.emit(TransactionEntryEvent.Saved)
+                _eventFlow.emit(TransactionEntryEvent.Saved)
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isSaving = false) }
+                _eventFlow.emit(TransactionEntryEvent.ShowSnackbar(e.message ?: "Failed to save transaction"))
+            }
         }
     }
 

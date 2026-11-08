@@ -2,7 +2,6 @@ package com.example.pam.ui.screens.splits
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
-import android.text.format.DateFormat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -635,7 +634,7 @@ private fun BatchReceiveBottomSheet(
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "Add multiple payment entries if friends paid you via different accounts or at the same time.",
+                        text = "Add multiple payment entries if repayments were received via different accounts or at different times.",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -822,7 +821,7 @@ private fun BatchReceiveBottomSheet(
                                                 },
                                                 cal.get(Calendar.HOUR_OF_DAY),
                                                 cal.get(Calendar.MINUTE),
-                                                DateFormat.is24HourFormat(context)
+                                                false // 12-hour format (AM/PM)
                                             ).show()
                                         }
                                 )
@@ -835,8 +834,8 @@ private fun BatchReceiveBottomSheet(
                         OutlinedTextField(
                             value = row.note,
                             onValueChange = { onNoteChange(row.id, it) },
-                            label = { Text("Note / From (optional)") },
-                            placeholder = { Text("e.g. Cash from friend") },
+                            label = { Text("Note (optional)") },
+                            placeholder = { Text("e.g. Partial repayment via Cash") },
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()

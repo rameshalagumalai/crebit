@@ -2,6 +2,7 @@ package com.example.pam.ui.screens.reports
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +39,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -57,7 +59,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.pam.data.model.DateRangeType
 import com.example.pam.data.model.TransactionWithDetails
+import com.example.pam.ui.components.AskCrebitBottomSheet
+import com.example.pam.ui.components.AskCrebitGlowingButton
 import com.example.pam.ui.components.PAMDateRangePickerDialog
+import com.example.pam.ui.components.SmartNarrativeDigestCard
 import com.example.pam.ui.components.TransactionDetailsDialog
 import com.example.pam.ui.components.TransactionItemCard
 import com.example.pam.ui.theme.ExpenseRed
@@ -76,6 +81,8 @@ fun ReportsScreen(
     val uiState by viewModel.uiState.collectAsState()
     var selectedTransactionForDetails by remember { mutableStateOf<TransactionWithDetails?>(null) }
     var showCustomDatePicker by remember { mutableStateOf(false) }
+    var showAskCrebitSheet by remember { mutableStateOf(false) }
+    var askCrebitQuery by remember { mutableStateOf("") }
 
     if (showCustomDatePicker) {
         PAMDateRangePickerDialog(
@@ -173,37 +180,49 @@ fun ReportsScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
-                                text = "Net Savings",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(
-                                        if (overview.netSavings >= 0) IncomeGreen.copy(alpha = 0.15f)
-                                        else ExpenseRed.copy(alpha = 0.15f)
+                            Column(modifier = Modifier.weight(1f, fill = false)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Net Savings",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (overview.netSavings >= 0) IncomeGreen.copy(alpha = 0.15f)
+                                                else ExpenseRed.copy(alpha = 0.15f)
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                                    ) {
+                                        Text(
+                                            text = if (overview.netSavings >= 0) "${overview.savingsRatePercentage.toInt()}% Saved" else "Deficit",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (overview.netSavings >= 0) IncomeGreen else ExpenseRed
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
                                 Text(
-                                    text = if (overview.netSavings >= 0) "${overview.savingsRatePercentage.toInt()}% Saved" else "Deficit",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (overview.netSavings >= 0) IncomeGreen else ExpenseRed
+                                    text = CurrencyFormatter.format(overview.netSavings),
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (overview.netSavings >= 0) MaterialTheme.colorScheme.onSurface else ExpenseRed
                                 )
                             }
+
+                            // Glowing Animated Ask Crebit AI Button (Same style as Dashboard)
+                            AskCrebitGlowingButton(
+                                onClick = { showAskCrebitSheet = true }
+                            )
                         }
-
-                        Spacer(modifier = Modifier.height(4.dp))
-
-                        Text(
-                            text = CurrencyFormatter.format(overview.netSavings),
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (overview.netSavings >= 0) MaterialTheme.colorScheme.onSurface else ExpenseRed
-                        )
 
                         Spacer(modifier = Modifier.height(18.dp))
 
@@ -288,6 +307,29 @@ fun ReportsScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // Smart Narrative Digest Card (Feature 6)
+            if (uiState.smartDigest != null && uiState.smartDigest!!.insights.isNotEmpty()) {
+                item {
+                    SmartNarrativeDigestCard(
+                        digest = uiState.smartDigest!!,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                        onInsightClick = { insight ->
+                            if (insight.filterQuery != null) {
+                                askCrebitQuery = insight.filterQuery
+                                showAskCrebitSheet = true
+                            } else if (insight.relatedCategoryId != null) {
+                                val catSummary = uiState.categoryBreakdown.find { it.category.id == insight.relatedCategoryId }
+                                if (catSummary != null) {
+                                    viewModel.onCategoryClicked(catSummary)
+                                }
+                            }
+                        }
+                    )
                 }
             }
 
@@ -685,6 +727,28 @@ fun ReportsScreen(
             },
             onDelete = { id ->
                 selectedTransactionForDetails = null
+                viewModel.deleteTransaction(id)
+            }
+        )
+    }
+
+    if (showAskCrebitSheet) {
+        AskCrebitBottomSheet(
+            allTransactions = uiState.allTransactions,
+            accounts = uiState.accounts,
+            categories = uiState.categories,
+            splits = uiState.allSplits,
+            initialQuery = askCrebitQuery,
+            onDismiss = {
+                showAskCrebitSheet = false
+                askCrebitQuery = ""
+            },
+            onEditTransaction = { id ->
+                showAskCrebitSheet = false
+                askCrebitQuery = ""
+                onNavigateToTransactionDetail(id)
+            },
+            onDeleteTransaction = { id ->
                 viewModel.deleteTransaction(id)
             }
         )
